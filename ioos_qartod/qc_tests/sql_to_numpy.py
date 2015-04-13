@@ -5,10 +5,10 @@ from ioos_qartod.qc_tests import qc
 import quantities as q
 import pandas as pd
 import StringIO
-from credentials import dsn
+from pandas.io.excel import read_excel
+from credentials import dsn, sheet_loc
 
 conn = psycopg2.connect(dsn)
-psycopg2.extras.register_hstore(conn)
 cur = conn.cursor()
 cur.execute("""SELECT id, site_name FROM cbibs.d_station WHERE site_code != 'unknown'""")
 station_ids = cur.fetchall()
@@ -60,41 +60,63 @@ def upsert_results():
 # create staging/temp table to initially store the results in
 cur.execute('''CREATE TEMPORARY TABLE qartod_staging
                 (LIKE cbibs.j_qa_code_secondary_fob)''')
-for station_id in station_ids:
-    print(station_id[1])
-    for var in var_ids:
-        print(var[1])
-        cur.execute("""select * from (select o.id, measure_ts,
-                    obs_value, l.longitude lon, l.latitude lat
-                    from cbibs.f_observation o JOIN cbibs.d_location l
-                    ON (o.d_location_id = l.id) WHERE d_station_id = %s
-                    AND d_variable_id = %s
-                    ORDER BY measure_ts DESC LIMIT 50000) t ORDER BY measure_ts;""",
-                    (station_id[0], var[0]))
 
-        arr = np.fromiter(cur, dtype=[('id', 'i4'), ('timestamp', 'datetime64[us]'),
-                                      ('obs_val', 'f8'),
-                                      ('lon', 'f8'), ('lat', 'f8')])
-        print('rate of change')
-        rate_of_change_flags = qc.rate_of_change_check(arr['obs_val'], 3.5)
-        insert_qartod_result(arr['id'], qc.rate_of_change_check.qartod_id,
-                            rate_of_change_flags)
-        print('location')
-        loc_flags = qc.location_set_check(arr['lon'], arr['lat'],
-                                            range_max=20.0 * q.kilometer)
-        insert_qartod_result(arr['id'], qc.location_set_check.qartod_id, loc_flags)
-        print('gross range')
-        range_flags = qc.range_check(arr['obs_val'], (-2.5, 40))
-        insert_qartod_result(arr['id'], qc.range_check.qartod_id, range_flags)
-        print('spike')
-        spike_flags = qc.spike_check(arr['obs_val'], 3.0, 8.0)
-        insert_qartod_result(arr['id'], qc.spike_check.qartod_id, spike_flags)
-        print('flat line')
-        rep_flags = qc.flat_line_check(arr['obs_val'], 3, 5, 0.001)
-        insert_qartod_result(arr['id'], qc.flat_line_check.qartod_id, rep_flags)
+# read the sheet into a dict of DataFrames
+qc_config = pd.read_excel(sheet_loc, None)
 
-    final_flags = reduce(np.maximum,
-                        [loc_flags, range_flags, spike_flags, rep_flags])
+# TODO: could get rid of lon for most of these as they aren't location test
+# preload prepare statement
+cur.execute("""PREPARE get_obs AS SELECT o.id, measure_ts,
+                obs_value, l.longitude lon, l.latitude lat
+                FROM cbibs.f_observation o JOIN cbibs.d_location l
+                ON (o.d_location_id = l.id)
+                JOIN d_variable v ON v.id = o.d_variable_id
+                JOIN d_station st ON st.id = o.d_station_id
+                WHERE st.site_code = $1
+                AND v.actual_name = $2
+                ORDER BY measure_ts""")
 
+# these can almost certainly become more efficient if we configure by site
+# instead of test, as we don't have to naively refetch obs
+def gross_range_adapter(config):
+    # I wish I could inline here
+    for _, conf in config.iterrows():
+        # Pandas reads the string and may attempt to coerce to numeric
+        site = str(conf['site_code'])
+        var = conf['variable_name']
+        # TODO: May want to add type checking as spreadsheets don't really
+        # enforce types
+        sensor_span = (conf['sensor_min'], conf['sensor_max'])
+        if conf['user_min'] is not None and conf['user_max'] is not None:
+            user_span = (conf['user_min'], conf['user_max'])
+        else:
+            user_span = None
+        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+                           index_col='id')
+        #cur.execute("EXECUTE get_obs (%s, %s)", (site, var))
+        res = qc.range_check(data['obs_value'], sensor_span, user_span)
+        insert_qartod_result(data.index, qc.range_check.qartod_id, res)
+
+if "Gross Range" in qc_config:
+    gross_range_adapter(qc_config['Gross Range'])
+
+# TODO: Add remainder of test
+
+# NB: location is done on a per variable basis, but only really need to
+# do location test on the station level.  Consider modifying the schema?
+#def location_adapter(config):
+#    pass
+#
+#if "Location Test" in qc_config:
+#    location_adapter(qc_config['Location Test'])
+#
+#def flat_line_adapter(config):
+#    pass
+#
+#if "Flat Line" in qc_config:
+#    flat_line_adapter(qc_config['Flat Line'])
+#
+
+# when finished running the tests and parsing, upsert the results
 upsert_results()
 conn.commit()
