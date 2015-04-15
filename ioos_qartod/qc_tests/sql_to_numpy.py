@@ -109,28 +109,36 @@ def location_range_adapter(config):
         ll_lon = conf['ll_lon']
         ur_lat = conf['ur_lat']
         ur_lon = conf['ur_lon']
-        bbox_arr=[[ll_lon, ur_lon], [ll_lat, ur_lat]]
-        
-        data = pd.read_sql("""SELECT o.id, measure_ts,
-                obs_value, l.longitude lon, l.latitude lat
-                FROM cbibs.f_observation o JOIN cbibs.d_location l
-                ON (o.d_location_id = l.id)
-                JOIN d_station st ON st.id = o.d_station_id
-                WHERE st.site_code = %s
-                ORDER BY measure_ts""" , conn, params=(site))
-                
+        bbox_arr = [[ll_lon, ur_lon], [ll_lat, ur_lat]]
+        variable_group = conf['variable_group']
+
+        data = pd.read_sql("""SELECT gl.id, l.longitude lon, l.latitude lat
+                            FROM d_variable_group_location gl
+                            JOIN d_variable_group vg ON vg.id = gl.d_variable_group_id
+                            JOIN d_station st ON st.id = gl.d_station_id
+                            JOIN d_location l ON l.id = gl.d_location_id
+                            WHERE st.site_code = %s AND vg.group_name = %s""",
+                        conn, params=(site, variable_group))
         res = qc.location_set_check(data['lon'], data['lat'], bbox_arr)
-        insert_qartod_result(data.index, qc.location_set_check.qartod_id, res)
+        cur.execute('''CREATE TEMPORARY TABLE qartod_loc_staging
+                        (id integer, qc_result integer)''')
+        # could we just use numpy here instead?
+        df = pd.DataFrame(data=[data['id'].values, res]).T
+        csv_obj = StringIO.StringIO(df.to_csv(None, index=False, header=False))
+        # faster to copy_from + update or should i "mogrify" a cursor instead?
+        cur.copy_from(csv_obj, 'qartod_loc_staging', sep=',',
+                      columns=['id', 'qc_result'])
+        cur.execute("""UPDATE d_variable_group_location group_loc SET
+                    location_test=t.qc_result FROM qartod_loc_staging t
+                    WHERE t.id = group_loc.id""")
 
 if "Location Test" in qc_config:
     location_range_adapter(qc_config['Location Test'])
 
-
-
 def spike_check_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
-        var = conf['varible_name']
+        var = conf['variable_name']
         low = conf['low_threshold']
         high = conf['high_threshold']
 
@@ -138,7 +146,7 @@ def spike_check_adapter(config):
                            index_col='id')
 
         res = qc.spike_check(data['obs_value'], low, high)
-        insert_qartod_results(data.index, qc.spike_check.qartod_id, res)
+        insert_qartod_result(data.index, qc.spike_check.qartod_id, res)
 
 if "Spike" in qc_config:
     spike_check_adapter(qc_config['Spike'])
@@ -153,7 +161,7 @@ def rate_of_change_check_adapter(config):
                            index_col='id')
 
         res = qc.rate_of_change_check(data['obs_value'], thresh)
-        insert_qartod_results(data.index, qc.rate_of_change_check.qartod_id, res)
+        insert_qartod_result(data.index, qc.rate_of_change_check.qartod_id, res)
 
 if "Rate of Change" in qc_config:
     rate_of_change_check_adapter(qc_config["Rate of Change"])
@@ -167,27 +175,15 @@ def flat_line_check_adapter(config):
         low = conf['low_reps']
         high = conf['high_reps']
         eps = conf['epsilon']
-        
+
+        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+                           index_col='id')
         res = qc.flat_line_check(data.index, low, high, eps)
-        insert_qartod_results(data.index, qc.rate_of_change_check.qartod_id, res)
-        
+        insert_qartod_result(data.index, qc.flat_line_check.qartod_id, res)
+
 if "Flat Line" in qc_config:
     flat_line_check_adapter(qc_config["Flat Line"])
 
-# NB: location is done on a per variable basis, but only really need to
-# do location test on the station level.  Consider modifying the schema?
-#def location_adapter(config):
-#    pass
-#
-#if "Location Test" in qc_config:
-#    location_adapter(qc_config['Location Test'])
-#
-#def flat_line_adapter(config):
-#    pass
-#
-#if "Flat Line" in qc_config:
-#    flat_line_adapter(qc_config['Flat Line'])
-#
 
 # when finished running the tests and parsing, upsert the results
 upsert_results()
