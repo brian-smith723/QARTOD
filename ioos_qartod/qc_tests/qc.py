@@ -1,4 +1,5 @@
 import numpy as np
+from numpy import nan
 import pyproj
 import quantities as q
 import pandas as pd
@@ -245,3 +246,284 @@ def attenuated_signal_check(arr, times, min_var_warn, min_var_fail,
     else:
         flag_arr[time_idx] = QCFlags.GOOD_DATA
     return flag_arr
+
+#Brian
+#waves
+@add_qartod_ident(12, 'ST Time Series Gap')
+# Similar to  timing/ gap test
+# Test 9 NOT COMPLETED NO TEST WRITTEN
+def st_time_seires_gap(arr, N, start=0, end=0):
+    '''Checks for N consecutive missing data points. This defines the size of 
+    an unacceptable gap in the times series.It is the maximum number of consecutive 
+    missing data points allowed.  A counter (C2) increments from 0 (zero) as 
+    consecutive data points are missed. At the end of a gap of missing data, 
+    this counter is compared to N. If C2 > N, the test is failed and a suspect 
+    flag is set. The counter (C2) is reset to 0 after a data point is encountered.'''
+    # Checking for gaps assumes that there are no entries in the dataframe for
+    # a specific time. I need to know the interval in which observations are taken
+    # so I can compute how many points have been missed.... 
+   
+    #  If N is 'time', not 'integer'. E.g, if obs are taken every hour
+    # and data will fail if 6 hours is missed, N = 6 * 3600000000000. Operator needs to define the 
+    # value of time is, i.e. hours, seconds, days... 
+    # time is diffed in nonseconds. 
+    #assumes arr is a dataframe
+    #arr['2014-06-19T21:00:00.000000000-0400':'2014-07-30T22:00:00.000000000-0400']
+    #data_frame = arr[start : end]  
+    # N needs to be in nanoseconds
+
+    
+    diff_time= np.diff(arr)
+    #diff redeuces len by 1
+    time_arr = np.insert(diff_time, diff_time[0],diff_time[0]) 
+    time_arr = time_arr.astype(int)
+    flags_arr = ((arr_abs < N ) * QCFlags.GOOD_DATA + (arr_abs > N) * QCFlags.BAD_DATA) 
+    return flag_arr 
+            
+    
+
+@add_qartod_ident(13, 'LT Time Series Stuck Sensor')
+# Test 16
+def lt_time_series_stuck_sensor(arr, EPS):
+    '''When some sensors and/or data collection platforms (DCPs) fail, the result
+    can be a continuously repeated observation of the same value. This test compares 
+    the present observation (POn) to a number (REP_CNT_FAIL or REP_CNT_SUSPECT) of 
+    previous observations. POn is flagged if it has the same value as previous 
+    observations within a tolerance value EPS to allow for numerical round-off error.
+    Note that historical flags are not changed.'''
+    # cannot think of a better method, other than a for loop...
+    # this function is very sensitive to EPS value as an argument.
+    flag_arr = np.empty(arr.shape, dtype='uint8')
+    flag_arr.fill(QCFlags.UNKNOWN)
+    arr_copy = np.copy(arr)
+    arr_copy = arr_copy.astype(float)
+    diff_copy = np.diff(arr_copy)
+    # Fail When the five most recent observations are equal, POn is flagged fail.
+    # I decided to use a moving average...
+    # I ignore the three most recent observations,ie P0n is flagged to suspect
+    # 5 point moving average
+    WINDOW = 5
+    weights = np.repeat(1.0, WINDOW)/ WINDOW
+    ma =np.convolve(arr, weights)[WINDOW-1:-(WINDOW-1)]
+    diff_ma = np.diff(ma)
+    diff_copy[ : len(diff_ma)]= diff_ma
+    diff_copy = np.insert(diff_copy, diff_copy[0], diff_copy[0]) 
+    arr_abs = abs(diff_copy)
+    flag_arr = ((arr_abs < EPS ) * QCFlags.BAD_DATA + (arr_abs > EPS) * QCFlags.GOOD_DATA) 
+
+    return flag_arr
+
+@add_qartod_ident(14, "ST Time Series Acceleration")
+# test 13 NO TEST WRITTEN NEED MORE DETAIL
+def st_time_series_acceleration(arr, M, N):
+    '''The in-situ systems that collect these time series data can accumulate
+    accelerations in all directions from multiple sensors. Any acceleration 
+    that exceeds a practical value should be replaced by an 
+    interpolated/extrapolated value.'''
+    G = 9.80
+    M5 = 0
+    A = G * M
+    #arr must be dtype=float or nan will not work
+    arr[arr<A]= nan
+    # need to check if None > N
+    nans = np.isnan(arrs).sum()
+    if nans < N:
+    #Any acceleration values exceeding M*G are replaced with an 
+    #operator-defined interpolated/extrapolated values.
+    #Not sure how that would work...
+    # this function interpolates based on the data
+    # need further information before I can finish this test.
+        interp_arr = Seires(arr).interpolate()
+    return inter_arr
+
+@add_qartod_ident(15, "ST Time Series Spike")
+# test 10
+def st_time_series_spike(arr, N, M, P):
+    '''The Spike Test checks for spikes in a time series. Spikes are defined as 
+    points more than M times the standard deviation (SD) from the mean. After
+    the ST time series is received, the mean (MEAN) and standard deviation (SD)
+    must be determined. Counters M1 and M2 are set to 0. Once a spike has been
+    identified, the spike is replaced with the average (AVG) of the previous point 
+    (n-1) and the following point (n+1). The counter, M1, is incremented as spikes
+    are identified. The algorithm should iterate over the time series multiple (P)
+    times, recomputing the mean and standard deviation for each iteration. After 
+    the Pth iteration, a final spike count, M2, is run. The counters M1 and M2 are 
+    compared to the number of spikes allowed. The time series is rejected if
+    it contains too many spikes (generally set to N% of all points) or if spikes 
+    remain after P iterations (M2 > 0). '''
+
+    flag_good = np.empty(arr.shape, dtype='uint8')
+    flag_good.fill(QCFlags.GOOD_DATA)
+    flag_bad =  np.empty(arr.shape, dtype='uint8')
+    flag_bad.fill(QCFlags.BAD_DATA)
+    recur = 0
+    M1_list = []
+    arr_copy = np.copy(arr)
+
+    if type(N) == int:
+        N= N/100.0
+    
+    def percent_outliers():
+        if M1_list[0] == 0:
+            zero = 0
+            return zero
+        else:
+
+            outliers = M1_list[0]/float(len(arr))
+            return  outliers
+    
+    while recur < P:
+        M1 = 0
+        std = np.std(arr_copy)     
+        mean = np.mean(arr_copy)
+        for i,ob in enumerate(arr_copy):
+            if abs(ob - mean)> M * std:
+                try:
+                    M1+=1
+                    arr_copy[i] = (arr_copy[i-1] + arr_copy[i+1])/2
+                except IndexError:
+                    continue
+        recur+=1
+        M1_list.append(M1)
+        M2 = M1
+
+    if M2 > 0 or percent_outliers() > N:
+        return flag_bad 
+    
+    elif percent_outliers() < N and M2 == 0:
+        return flag_good
+            
+@add_qartod_ident(16, "ST Time Segment Shift")
+#test 12
+def st_time_series_segment_shift(arr,P, m, n):
+    '''The time series is broken into n segments m points long. Segment means 
+    are computed for each of the n segments. Each segment mean is compared to 
+    neighboring segments. If the difference in the means of two consecutive 
+    segments exceeds P, the ST time series data are rejected. The operator 
+    defines n segments, m points, and P.
+
+    The operator determines the number of segments (n) to be compared in the 
+    time series and the length of each segment (m) to be compared in the time 
+    series. Then, m or n can be computed by the other in conjunction with the
+    length of the entire time series. The operator also defines the mean shift 
+    (P) that is allowed in the time series. A mean value (MEAN [n]) is computed
+    for each of the n segments. The means of consecutive segment are
+    then compared. If the differences of the means exceed the allowed mean 
+    shift (P) provided by the user, the entire time series is failed.'''
+    # (above) entire time series fails but also states if < P flag = 1
+    # for all values of n-1...
+    
+    if n == 0  and m == 0:
+        raise ValueError('n or m need a value')
+    if m == 0:
+        m = len(arr)/n
+    if n == 0:
+        n = len(arr)/m
+
+    flag_good = np.empty(arr.shape, dtype='uint8')
+    flag_good.fill(QCFlags.GOOD_DATA)
+    flag_bad =  np.empty(arr.shape, dtype='uint8')
+    flag_bad.fill(QCFlags.BAD_DATA)
+    
+    arr_copy = np.copy(arr)
+    flag_arr = np.empty(arr.shape, dtype='uint8')
+    # resizing removes elements to fit dimensions or adds copies of data
+    arr_copy.resize(n,m)
+    arr_diff=np.diff(np.mean(arr_copy,axis=1))
+    arr_bool = arr_diff >= P
+    if np.sum(arr_bool) >= 1:
+         return flag_bad
+    elif np.sum(arr_bool) < 1:
+         return flag_good
+
+@add_qartod_ident(17, "LT Time Series Mean and Standard Deviation")
+#test 15
+def lt_time_series_mean_and_standard_deviation(arr, N):
+    '''Check that TSVAL value is within limits defined by the operator. Operator 
+    defines the period over which the mean and standard deviation are calculated 
+    and the number of allowable standard deviations (N).'''
+     
+    # See attenuated signal test 10
+
+#@add_qartod_ident(18,"LT Time Series Bulk Wave Parameters Max/Min/Acceptable Range")
+# test 19
+# '''The operator should establish maximum and minimum values for the bulk wave 
+#     parameters; wave height (WVHGT), period (WVPD), direction (WVDIR), and
+#     spreading (WVSP) (if provided). If the wave height fails this test, then no
+#     bulk wave parameters should be released. Otherwise, suspect flags are set.
+#     Operator supplies minimum wave height (MINWH), maximum wave height (MAXWH), 
+#     minimum wave period (MINWP), maximum wave period (MAXWP), minimum spreading 
+#     value (MINSV), and maximum spreading value (MAXSV).'''
+#     
+    # See gross range test?
+    # See current direction?
+    # Looks like this a combination of the two.
+
+   # if WVHGT < MINWH or WVHGT > MAXWH:
+        # flag 4 for all parameters
+   # if WVPD < MINWP or WVPD > MAXWP:
+        #flag = 3.
+   # if WVDIR < 0.0 or WVDIR > 360:
+        # flag = 3.
+   # if WVSP < MINSV or WVSP > MAXSV:
+        #flag = 3.
+@add_qartod_ident(19, "LT Time Series Rate of Change")
+# test 20
+def lt_time_series_rate_of_change(arr, MAXHSDIFF):
+    '''This test is applied only to wave height Hs. The operator selects a 
+    threshold value, MAXHSDIFF, and the two most recent observations Hs (n)
+    and Hs(n-1) are checked to see if the rate of change is exceeded.'''
+    
+    arr_diff = np.diff(arr)
+    arr_insert = np.insert(arr_diff, 0, 0) 
+    arr_abs = abs(arr_insert)
+    flag_arr = ((arr_abs <= MAXHSDIFF) * QCFlags.GOOD_DATA + (arr_abs > MAXHSDIFF) * QCFlags.BAD_DATA)    
+    return flag_arr
+
+#Currents
+@add_qartod_ident(20, "Current Speed")
+# test 10
+def current_speed(arr, SPDMAX):
+    '''Current speed, CSPD(j), is typically provided as a positive value. This 
+    test checks for unrealistically high current speed values and is applied to 
+    each depth bin, i'''
+    flag_arr = ((arr <= SPDMAX ) * QCFlags.GOOD_DATA + (arr > SPDMAX) * QCFlags.BAD_DATA) 
+
+    return flag_arr
+
+@add_qartod_ident(21, "Current Direction")
+#test 11
+def current_direction(arr):
+    '''This test ensures that the current direction values fall between 0 and 360
+    degrees, inclusive. In most systems, 0 is reported as NO current and 360
+    degrees indicates a current to the north. This test is applied to each depth bin, i.'''
+
+    arr_copy = np.copy(arr)
+    flag_arr = np.ones_like(arr, dtype='uint8')
+    flag_arr = (np.logical_and(arr>=0.0, arr<=360.0)* QCFlags.GOOD_DATA 
+    + np.logical_or(arr< 0.0, arr>360.0) * QCFlags.BAD_DATA)
+    
+    return flag_arr
+
+@add_qartod_ident(22, "Horizontal Velocity")
+# test 12
+def horizontal_velocity():
+    '''Horizontal velocities, u(i) and v(i), may be represented as components 
+    (East-West and North-South; Alongshore and Cross-Shore: Alongshelf and
+    Cross-Shelf, Along-Isobath and Cross-Isobath, etc.) of the current speed
+    and direction. This test ensures that speeds in the respective horizontal
+    directions are valid. Maximum allowed values may differ in the orthogonal
+    directions. This test is applied to each depth bin, i.'''
+
+    #I don't fully understand this one. Will need to come back.
+    # u(i) east == (0,90) (270,360) west == (90-180) (180, 360) 
+    # v(i) north == (0,180) south ==( 180, 360)
+    #  
+
+@add_qartod_ident(22, "Vertical Velocity")
+# test 13
+def vertical_velocity():
+    '''Vertical velocities, w(i), are reported by many ADCPs. They are calculated 
+    just like the horizontal velocities, but along the vertical axis. This test is 
+    applied to each depth bin, i.'''
+    # Not sure either...

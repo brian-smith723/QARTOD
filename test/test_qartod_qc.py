@@ -154,3 +154,62 @@ class QartodQcTest(unittest.TestCase):
                                            check_type='range')
         npt.assert_array_equal(flags, np.array([2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
                                                 2, 2]))
+
+   
+    def test_st_time_series_spike(self):
+        '''Wave test 10, qartod test 15'''
+
+        signal_pass = np.array([.29,.34,.45,.34,.27,.23,.24,.19,.18,.42,.46,.48,.47,.49,.54,.52,.49,.38,.18,.13])
+        signal_fail = np.array([100000000000,0.34,0.45,0.34,0.27,0.23,0.24,0.19,0.18,9000,0.46,0.48,0.47,0.49,0.54,0.52,0.49,200000,0.18,0.13])
+        M = 2
+        N = .10
+        P = 2
+        flags_pass = qc.st_time_series_spike(signal_pass, N, M, P)
+        flags_fail = qc.st_time_series_spike(signal_fail, N, M, P)
+        npt.assert_array_equal(flags_pass, np.array([1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]))
+        npt.assert_array_equal(flags_fail, np.array([4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4]))
+
+            
+    def test_st_time_segment_shift(self):
+        '''Wave test 12, qartod test 16'''
+        signal_pass = np.array([.29,.34,.45,.34,.27,.23,.24,.19,.18,.42,.46,.48,.47,.49,.54,.52,.49,.38,.18,.13])
+        signal_fail = np.array([100000000000,0.34,0.45,0.34,0.27,0.23,0.24,0.19,0.18,9000,0.46,0.48,0.47,0.49,0.54,0.52,0.49,200000,0.18,0.13])
+        m = 3
+        P = 1
+        n = 0
+        # m & n are optional arg, need at least one defined
+        flags_pass = qc.st_time_series_segment_shift(signal_pass,P, m, n)
+        flags_fail = qc.st_time_series_segment_shift(signal_fail,P, m, n)
+        npt.assert_array_equal(flags_pass, np.array([1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]))
+        npt.assert_array_equal(flags_fail, np.array([4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4]))
+
+    def test_lt_time_series_rate_of_change(self):
+        '''Wave test 20, qartod test 19'''
+        signal= np.array([.29,.34,.45,.34,.27,.23,.24,.19,.18,.42,.46,.48,.47,.49,.54,.52,.49,.38,.18,.13])
+        MAXHSDIFF = .1 #should be meters, example only
+        flags = qc.lt_time_series_rate_of_change(signal, MAXHSDIFF)
+        npt.assert_array_equal(flags, np.array([1,1,4,4,1,1,1,1,1,4,1,1,1,1,1,1,1,4,4,1]))
+
+    def test_lt_time_series_stuck_sensor(self):
+        '''Wave test 16, qartod test 13'''
+
+        signal = np.array([1.0,1,1,0,1,1,1,1,1,1,0,1,2,3,4,2,2,2,2,2,2])
+        eps = .20
+        flags = qc.lt_time_series_stuck_sensor(signal, eps)
+        npt.assert_array_equal(flags, np.array([4,4,4,4,4,4,4,4,4,1,1,1,1,4,1,1,4,4,4,4,4]))
+
+    def test_current_speed(self):
+        '''Current test 10, qartod test 20'''
+        signal = np.array([1.0,1,1,0,1,1,1,1,1,1,0,1,2,3,4,2,2,2,2,2,2,1,1])
+        SPDMAX = 1
+        flags = qc.current_speed(signal, SPDMAX)
+        npt.assert_array_equal(flags, np.array([1,1,1,1,1,1,1,1,1,1,1,1,4,4,4,4,4,4,4,4,4,1,1]))
+
+    def test_current_direction(self):
+        '''Current test 11, qartod 21'''
+        signal = np.array([368,12,1.0,20,180,360,299,1,1,1,0,-1,2,3,4,2,2,2,2,2,-.22,1,-9])
+        SPDMAX = 1
+        flags = qc.current_direction(signal)
+        npt.assert_array_equal(flags, np.array([4,1,1,1,1,1,1,1,1,1,1,4,1,1,1,1,1,1,1,1,4,1,4]))
+
+

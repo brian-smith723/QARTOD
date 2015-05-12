@@ -2,3 +2,5 @@
 *.pyc
 .DS_Store
 .ropeproject
+variablenames.txt
+credentials.py
