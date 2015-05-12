@@ -12,15 +12,16 @@ conn = psycopg2.connect(dsn)
 cur = conn.cursor()
 cur.execute("""SELECT id, site_name FROM cbibs.d_station WHERE site_code != 'unknown'""")
 station_ids = cur.fetchall()
-cur.execute("SELECT id, actual_name FROM cbibs.d_variable WHERE actual_name IN ('wind_speed', 'sea_water_salinity', 'sea_water_temperature','sea_surface_wave_significant_height')")
+cur.execute("SELECT id, actual_name FROM cbibs.d_variable")
 var_ids = cur.fetchall()
-
 
 def insert_qartod_result(obs_ids, test_id, flags):
     """Insert results of the QARTOD test into the database.  Actually
        attempts to do an upsert"""
     rep_test_id = np.repeat(test_id, len(obs_ids))
-    df = pd.DataFrame([obs_ids, rep_test_id, flags]).T
+
+    df = pd.DataFrame({'f_observation_id': obs_ids, 'qartod_code': rep_test_id,
+                       'qc_code_id': flags})
     # should run faster to insert many rows
     csv_obj = StringIO.StringIO(df.to_csv(None, index=False, header=False))
     cur.copy_from(csv_obj, 'qartod_staging', sep=',',
@@ -60,8 +61,10 @@ def upsert_results():
 # create staging/temp table to initially store the results in
 cur.execute('''CREATE TEMPORARY TABLE qartod_staging
                 (LIKE cbibs.j_qa_code_secondary_fob)''')
-#import pdb
-#pdb.set_trace()
+
+cur.execute('''CREATE TEMPORARY TABLE qartod_loc_staging
+                (id integer, qc_result integer)''')
+
 # read the sheet into a dict of DataFrames
 qc_config = pd.read_excel(sheet_loc, None)
 # TODO: could get rid of lon for most of these as they aren't location test
@@ -110,17 +113,27 @@ def location_range_adapter(config):
         ur_lat = conf['ur_lat']
         ur_lon = conf['ur_lon']
         bbox_arr=[[ll_lon, ur_lon], [ll_lat, ur_lat]]
-        
-        data = pd.read_sql("""SELECT o.id, measure_ts,
-                obs_value, l.longitude lon, l.latitude lat
-                FROM cbibs.f_observation o JOIN cbibs.d_location l
-                ON (o.d_location_id = l.id)
-                JOIN d_station st ON st.id = o.d_station_id
-                WHERE st.site_code = %s
-                ORDER BY measure_ts""" , conn, params=(site,))
-                
+
+        bbox_arr = [[ll_lon, ur_lon], [ll_lat, ur_lat]]
+        variable_group = conf['variable_group']
+
+        data = pd.read_sql("""SELECT gl.id, l.longitude lon, l.latitude lat
+                            FROM d_variable_group_location gl
+                            JOIN d_variable_group vg ON vg.id = gl.d_variable_group_id
+                            JOIN d_station st ON st.id = gl.d_station_id
+                            JOIN d_location l ON l.id = gl.d_location_id
+                            WHERE st.site_code = %s AND vg.group_name = %s""",
+                        conn, params=(site, variable_group))
+        # we want to pass the non-input kwargs to the history adapter
         res = qc.location_set_check(data['lon'], data['lat'], bbox_arr)
-        insert_qartod_result(data.index, qc.location_set_check.qartod_id, res)
+        df = pd.DataFrame({'id': data['id'], 'qc_result': res})
+        csv_obj = StringIO.StringIO(df.to_csv(None, index=False, header=False))
+        # faster to copy_from?
+        cur.copy_from(csv_obj, 'qartod_loc_staging', sep=',',
+                      columns=['id', 'qc_result'])
+        cur.execute("""UPDATE d_variable_group_location group_loc SET
+                    location_test=t.qc_result FROM qartod_loc_staging t
+                    WHERE t.id = group_loc.id""")
 
 if "Location Test" in qc_config:
     location_range_adapter(qc_config['Location Test'])
@@ -152,6 +165,7 @@ def rate_of_change_check_adapter(config):
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
 
+        # get observation_id
         res = qc.rate_of_change_check(data['obs_value'], thresh)
         insert_qartod_result(data.index, qc.rate_of_change_check.qartod_id, res)
 
@@ -170,10 +184,10 @@ def flat_line_check_adapter(config):
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
 
-        
+
         res = qc.flat_line_check(data.index, low, high, eps)
         insert_qartod_result(data.index, qc.flat_line_check.qartod_id, res)
-        
+
 if "Flat Line" in qc_config:
     flat_line_check_adapter(qc_config["Flat Line"])
 
@@ -219,7 +233,7 @@ def st_time_series_segement_shift_adapter(config):
         insert_qartod_result(data.index, qc.st_time_series_segment_shift.qartod_id, res)
 if "ST Time Segment Shift" in qc_config:
     st_time_series_segement_shift_adapter(qc_config["ST Time Segment Shift"])
-    
+
 def lt_time_series_rate_of_change_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
@@ -231,7 +245,7 @@ def lt_time_series_rate_of_change_adapter(config):
         insert_qartod_result(data.index, qc.lt_time_series_rate_of_change.qartod_id, res)
 if "LT Time Series Rate of Change" in qc_config:
     lt_time_series_rate_of_change_adapter(qc_config["LT Time Series Rate of Change"])
-# current_direction and current_velocity produce an empty array 
+# current_direction and current_velocity produce an empty array
 # no data avaiable?
 
 #def current_speed_adapter(config):
