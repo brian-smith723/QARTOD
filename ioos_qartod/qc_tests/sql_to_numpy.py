@@ -12,7 +12,7 @@ conn = psycopg2.connect(dsn)
 cur = conn.cursor()
 cur.execute("""SELECT id, site_name FROM cbibs.d_station WHERE site_code != 'unknown'""")
 station_ids = cur.fetchall()
-cur.execute("SELECT id, actual_name FROM cbibs.d_variable WHERE actual_name IN ('wind_speed', 'sea_water_salinity', 'sea_water_temperature')")
+cur.execute("SELECT id, actual_name FROM cbibs.d_variable WHERE actual_name IN ('wind_speed', 'sea_water_salinity', 'sea_water_temperature','sea_surface_wave_significant_height')")
 var_ids = cur.fetchall()
 
 
@@ -60,10 +60,10 @@ def upsert_results():
 # create staging/temp table to initially store the results in
 cur.execute('''CREATE TEMPORARY TABLE qartod_staging
                 (LIKE cbibs.j_qa_code_secondary_fob)''')
-
+#import pdb
+#pdb.set_trace()
 # read the sheet into a dict of DataFrames
 qc_config = pd.read_excel(sheet_loc, None)
-
 # TODO: could get rid of lon for most of these as they aren't location test
 # preload prepare statement
 cur.execute("""PREPARE get_obs AS SELECT o.id, measure_ts,
@@ -117,7 +117,7 @@ def location_range_adapter(config):
                 ON (o.d_location_id = l.id)
                 JOIN d_station st ON st.id = o.d_station_id
                 WHERE st.site_code = %s
-                ORDER BY measure_ts""" , conn, params=(site))
+                ORDER BY measure_ts""" , conn, params=(site,))
                 
         res = qc.location_set_check(data['lon'], data['lat'], bbox_arr)
         insert_qartod_result(data.index, qc.location_set_check.qartod_id, res)
@@ -130,7 +130,7 @@ if "Location Test" in qc_config:
 def spike_check_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
-        var = conf['varible_name']
+        var = conf['variable_name']
         low = conf['low_threshold']
         high = conf['high_threshold']
 
@@ -138,7 +138,7 @@ def spike_check_adapter(config):
                            index_col='id')
 
         res = qc.spike_check(data['obs_value'], low, high)
-        insert_qartod_results(data.index, qc.spike_check.qartod_id, res)
+        insert_qartod_result(data.index, qc.spike_check.qartod_id, res)
 
 if "Spike" in qc_config:
     spike_check_adapter(qc_config['Spike'])
@@ -153,7 +153,7 @@ def rate_of_change_check_adapter(config):
                            index_col='id')
 
         res = qc.rate_of_change_check(data['obs_value'], thresh)
-        insert_qartod_results(data.index, qc.rate_of_change_check.qartod_id, res)
+        insert_qartod_result(data.index, qc.rate_of_change_check.qartod_id, res)
 
 if "Rate of Change" in qc_config:
     rate_of_change_check_adapter(qc_config["Rate of Change"])
@@ -167,28 +167,97 @@ def flat_line_check_adapter(config):
         low = conf['low_reps']
         high = conf['high_reps']
         eps = conf['epsilon']
+        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+                           index_col='id')
+
         
         res = qc.flat_line_check(data.index, low, high, eps)
-        insert_qartod_results(data.index, qc.rate_of_change_check.qartod_id, res)
+        insert_qartod_result(data.index, qc.flat_line_check.qartod_id, res)
         
 if "Flat Line" in qc_config:
     flat_line_check_adapter(qc_config["Flat Line"])
 
-# NB: location is done on a per variable basis, but only really need to
-# do location test on the station level.  Consider modifying the schema?
-#def location_adapter(config):
-#    pass
-#
-#if "Location Test" in qc_config:
-#    location_adapter(qc_config['Location Test'])
-#
-#def flat_line_adapter(config):
-#    pass
-#
-#if "Flat Line" in qc_config:
-#    flat_line_adapter(qc_config['Flat Line'])
-#
+def lt_time_series_stuck_sensor_adapter(config):
+    for _, conf in config.iterrows():
+        site = str(conf['site_code'])
+        var = conf['variable_name']
+        EPS= conf['EPS']
 
-# when finished running the tests and parsing, upsert the results
+        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+                           index_col='id')
+
+        res = qc.lt_time_series_stuck_sensor(data['obs_value'], EPS)
+        insert_qartod_result(data.index, qc.lt_time_series_stuck_sensor.qartod_id, res)
+if "LT Time Series Stuck Sensor" in qc_config:
+    lt_time_series_stuck_sensor_adapter(qc_config['LT Time Series Stuck Sensor'])
+
+def st_time_series_spike_adapter(config):
+    for _, conf in config.iterrows():
+        site = str(conf['site_code'])
+        var = conf['variable_name']
+        N = conf['N']
+        M = conf['M']
+        P = conf['P']
+        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+                           index_col='id')
+
+        res = qc.st_time_series_spike(data['obs_value'], N, M, P)
+        insert_qartod_result(data.index, qc.st_time_series_spike.qartod_id, res)
+if "ST Time Series Spike" in qc_config:
+    st_time_series_spike_adapter(qc_config["ST Time Series Spike"])
+
+def st_time_series_segement_shift_adapter(config):
+    for _, conf in config.iterrows():
+        site = str(conf['site_code'])
+        var = conf['variable_name']
+        P = conf['P']
+        m = conf['m']
+        n = conf['n']
+        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+                           index_col='id')
+        res = qc.st_time_series_segment_shift(data['obs_value'], P, m, n)
+        insert_qartod_result(data.index, qc.st_time_series_segment_shift.qartod_id, res)
+if "ST Time Segment Shift" in qc_config:
+    st_time_series_segement_shift_adapter(qc_config["ST Time Segment Shift"])
+    
+def lt_time_series_rate_of_change_adapter(config):
+    for _, conf in config.iterrows():
+        site = str(conf['site_code'])
+        var = conf['variable_name']
+        MAXHSDIFF = conf['MAXHSDIFF']
+        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+                           index_col='id')
+        res = qc.lt_time_series_rate_of_change(data['obs_value'], MAXHSDIFF)
+        insert_qartod_result(data.index, qc.lt_time_series_rate_of_change.qartod_id, res)
+if "LT Time Series Rate of Change" in qc_config:
+    lt_time_series_rate_of_change_adapter(qc_config["LT Time Series Rate of Change"])
+# current_direction and current_velocity produce an empty array 
+# no data avaiable?
+
+#def current_speed_adapter(config):
+#    for _, conf in config.iterrows():
+#        site = str(config['site_code'])
+#        var = conf['variable_name']
+#        SPDMAX = conf['SPDMAX']
+#        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+#                           index_col='id')
+#
+#        res = qc.current_speed(data['obs_val'], SPDMAX)
+#        insert_qartod_result(data.index, qc.current_speed.qartod_id, res)
+#if "Current Speed" in qc_config:
+#    current_speed_adapter(qc_config["Current Speed"])
+#
+#def current_direction_adapter(config):
+#    for _, conf in config.iterrows():
+#        site = str(config['site_code'])
+#        var = conf['variable_name']
+#        data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
+#                           index_col='id')
+#
+#        res = qc.current_direction(data['obs_val'])
+#        insert_qartod_result(data['obs_val'], qc.current_direction.qartod_id, res)
+#if "Current Direction" in qc_config:
+#    current_speed_adapter(qc_config["Current Direction"])
+
 upsert_results()
 conn.commit()

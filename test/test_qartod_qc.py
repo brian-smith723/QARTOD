@@ -176,9 +176,10 @@ class QartodQcTest(unittest.TestCase):
         signal_fail = np.array([100000000000,0.34,0.45,0.34,0.27,0.23,0.24,0.19,0.18,9000,0.46,0.48,0.47,0.49,0.54,0.52,0.49,200000,0.18,0.13])
         m = 3
         P = 1
+        n = 0
         # m & n are optional arg, need at least one defined
-        flags_pass = qc.st_time_series_segment_shift(signal_pass,P,m)
-        flags_fail = qc.st_time_series_segment_shift(signal_fail,P,m)
+        flags_pass = qc.st_time_series_segment_shift(signal_pass,P, m, n)
+        flags_fail = qc.st_time_series_segment_shift(signal_fail,P, m, n)
         npt.assert_array_equal(flags_pass, np.array([1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]))
         npt.assert_array_equal(flags_fail, np.array([4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4]))
 

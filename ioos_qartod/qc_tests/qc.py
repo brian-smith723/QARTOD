@@ -364,8 +364,13 @@ def st_time_series_spike(arr, N, M, P):
         N= N/100.0
     
     def percent_outliers():
-        outliers = M1_list[0]/float(len(arr))
-        return  outliers
+        if M1_list[0] == 0:
+            zero = 0
+            return zero
+        else:
+
+            outliers = M1_list[0]/float(len(arr))
+            return  outliers
     
     while recur < P:
         M1 = 0
@@ -390,7 +395,7 @@ def st_time_series_spike(arr, N, M, P):
             
 @add_qartod_ident(16, "ST Time Segment Shift")
 #test 12
-def st_time_series_segment_shift(arr,P, m=0, n=0):
+def st_time_series_segment_shift(arr,P, m, n):
     '''The time series is broken into n segments m points long. Segment means 
     are computed for each of the n segments. Each segment mean is compared to 
     neighboring segments. If the difference in the means of two consecutive 
@@ -405,7 +410,7 @@ def st_time_series_segment_shift(arr,P, m=0, n=0):
     for each of the n segments. The means of consecutive segment are
     then compared. If the differences of the means exceed the allowed mean 
     shift (P) provided by the user, the entire time series is failed.'''
-    # (above) enitre time series fails but also states if < P flag = 1
+    # (above) entire time series fails but also states if < P flag = 1
     # for all values of n-1...
     
     if n == 0  and m == 0:
@@ -440,20 +445,19 @@ def lt_time_series_mean_and_standard_deviation(arr, N):
      
     # See attenuated signal test 10
 
-@add_qartod_ident(18,"LT Time Series Bulk Wave Parameters Max/Min/Acceptable Range")
+#@add_qartod_ident(18,"LT Time Series Bulk Wave Parameters Max/Min/Acceptable Range")
 # test 19
-def lt_time_series_bulk_wave_parameters_max_min_acceptable_range(WVHGT, WVPD, WVDIR, WVSP, MINWH, MAXWH, MINWP, MAXWP, MINSV, MAXSV):
-    '''The operator should establish maximum and minimum values for the bulk wave 
-    parameters; wave height (WVHGT), period (WVPD), direction (WVDIR), and
-    spreading (WVSP) (if provided). If the wave height fails this test, then no
-    bulk wave parameters should be released. Otherwise, suspect flags are set.
-    Operator supplies minimum wave height (MINWH), maximum wave height (MAXWH), 
-    minimum wave period (MINWP), maximum wave period (MAXWP), minimum spreading 
-    value (MINSV), and maximum spreading value (MAXSV).'''
-    
+# '''The operator should establish maximum and minimum values for the bulk wave 
+#     parameters; wave height (WVHGT), period (WVPD), direction (WVDIR), and
+#     spreading (WVSP) (if provided). If the wave height fails this test, then no
+#     bulk wave parameters should be released. Otherwise, suspect flags are set.
+#     Operator supplies minimum wave height (MINWH), maximum wave height (MAXWH), 
+#     minimum wave period (MINWP), maximum wave period (MAXWP), minimum spreading 
+#     value (MINSV), and maximum spreading value (MAXSV).'''
+#     
     # See gross range test?
     # See current direction?
-    # Looks like this is a combination of the two.
+    # Looks like this a combination of the two.
 
    # if WVHGT < MINWH or WVHGT > MAXWH:
         # flag 4 for all parameters
@@ -470,9 +474,9 @@ def lt_time_series_rate_of_change(arr, MAXHSDIFF):
     threshold value, MAXHSDIFF, and the two most recent observations Hs (n)
     and Hs(n-1) are checked to see if the rate of change is exceeded.'''
     
-    arr_diff = np.insert(arr, arr[0], arr[0]) 
-    arr_diff = np.diff(arr_diff)
-    arr_abs = abs(arr_diff)
+    arr_diff = np.diff(arr)
+    arr_insert = np.insert(arr_diff, 0, 0) 
+    arr_abs = abs(arr_insert)
     flag_arr = ((arr_abs <= MAXHSDIFF) * QCFlags.GOOD_DATA + (arr_abs > MAXHSDIFF) * QCFlags.BAD_DATA)    
     return flag_arr
 
@@ -496,8 +500,8 @@ def current_direction(arr):
 
     arr_copy = np.copy(arr)
     flag_arr = np.ones_like(arr, dtype='uint8')
-    flag_arr = np.logical_and(arr>=0.0, arr<=360.0)* QCFlags.GOOD_DATA 
-    + np.logical_or(arr< 0.0, arr>360.0) * QCFlags.BAD_DATA
+    flag_arr = (np.logical_and(arr>=0.0, arr<=360.0)* QCFlags.GOOD_DATA 
+    + np.logical_or(arr< 0.0, arr>360.0) * QCFlags.BAD_DATA)
     
     return flag_arr
 
