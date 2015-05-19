@@ -8,13 +8,30 @@ import StringIO
 from pandas.io.excel import read_excel
 from credentials import dsn, sheet_loc
 from collections import OrderedDict
+from datetime import datetime
 
 conn = psycopg2.connect(dsn)
 cur = conn.cursor()
 cur.execute("""SELECT id, site_name FROM cbibs.d_station WHERE site_code != 'unknown'""")
 station_ids = cur.fetchall()
+station_lookup = dict(reversed(t) for t in station_ids)
 cur.execute("SELECT id, actual_name FROM cbibs.d_variable")
 var_ids = cur.fetchall()
+var_lookup = dict(reversed(t) for t in var_ids)
+
+def add_test_history(station_code, variable_name, test_id, time_range, test_args):
+    var_id = var_lookup[variable_name]
+    station_id = station_lookup[station_code]
+    t_range = psycopg2.extras.DateTimeTZRange(time_range[0], time_range[1],
+                                              '[]')
+    now = datetime.utcnow()
+    test_args_json = psycopg2.extras.Json(test_args)
+    # test_args_json = psycopg2.extras.Json(test_args)
+    import ipdb; ipdb.set_trace()
+    cur.execute("""INSERT INTO test_parameters (run_time, d_station_id, d_variable_id,
+                    qartod_test_id, time_range, test_params) VALUES (%s, %s, %s,
+                    %s, %s, %s)""", (now, station_id, var_id, test_id,
+                                     t_range, test_args_json))
 
 def insert_qartod_result(obs_ids, test_id, flags):
     """Insert results of the QARTOD test into the database.  Actually
@@ -125,11 +142,7 @@ def location_range_adapter(config):
                             WHERE st.site_code = %s AND vg.group_name = %s""",
                         conn, params=(site, variable_group))
         res = qc.location_set_check(data['lon'], data['lat'], bbox_arr)
-        # could we just use numpy here instead?
         df = pd.DataFrame(OrderedDict([('id', data['id']), ('qc_result', res)]))
-        csv_obj = StringIO.StringIO(df.to_csv(None, index=False, header=False))
-        # faster to copy_from + update or should i "mogrify" a cursor instead?
-        # we want to pass the non-input kwargs to the history adapter
         csv_obj = StringIO.StringIO(df.to_csv(None, index=False, header=False))
         # faster to copy_from?
         cur.copy_from(csv_obj, 'qartod_loc_staging', sep=',',
@@ -166,8 +179,8 @@ def rate_of_change_check_adapter(config):
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
 
-        # get observation_id
-        res = qc.rate_of_change_check(data['obs_value'], thresh)
+        kwargs = {'thresh_val': thresh}
+        res = qc.rate_of_change_check(data['obs_value'], **kwargs)
         insert_qartod_result(data.index, qc.rate_of_change_check.qartod_id, res)
 
 if "Rate of Change" in qc_config:
@@ -179,15 +192,19 @@ def flat_line_check_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
         var = conf['variable_name']
-        low = conf['low_reps']
-        high = conf['high_reps']
-        eps = conf['epsilon']
+        kwargs = {
+                  'low_reps': conf['low_reps'],
+                  'high_reps': conf['high_reps'],
+                  'eps': conf['epsilon']
+        }
 
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
-
-        res = qc.flat_line_check(data.index, low, high, eps)
+        tbounds = data.measure_ts.min(), data.measure_ts.max()
+        res = qc.flat_line_check(data.index, **kwargs)
         insert_qartod_result(data.index, qc.flat_line_check.qartod_id, res)
+        add_test_history(site, var, qc.flat_line_check.qartod_id, tbounds,
+                         kwargs)
 
 if "Flat Line" in qc_config:
     flat_line_check_adapter(qc_config["Flat Line"])
