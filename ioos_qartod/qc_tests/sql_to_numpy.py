@@ -12,7 +12,7 @@ from datetime import datetime
 
 conn = psycopg2.connect(dsn)
 cur = conn.cursor()
-cur.execute("""SELECT id, site_name FROM cbibs.d_station WHERE site_code != 'unknown'""")
+cur.execute("""SELECT id, site_code FROM cbibs.d_station WHERE site_code != 'unknown'""")
 station_ids = cur.fetchall()
 station_lookup = dict(reversed(t) for t in station_ids)
 cur.execute("SELECT id, actual_name FROM cbibs.d_variable")
@@ -27,7 +27,7 @@ def add_test_history(station_code, variable_name, test_id, time_range, test_args
     now = datetime.utcnow()
     test_args_json = psycopg2.extras.Json(test_args)
     # test_args_json = psycopg2.extras.Json(test_args)
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     cur.execute("""INSERT INTO test_parameters (run_time, d_station_id, d_variable_id,
                     qartod_test_id, time_range, test_params) VALUES (%s, %s, %s,
                     %s, %s, %s)""", (now, station_id, var_id, test_id,
@@ -106,18 +106,29 @@ def gross_range_adapter(config):
         # Pandas reads the string and may attempt to coerce to numeric
         site = str(conf['site_code'])
         var = conf['variable_name']
+        kwargs = {
+                'sensor_min': conf['sensor_min'],
+                'sensor_max':conf['sensor_max'],
+                'user_min': conf['user_min'],
+                'user_max': conf['user_max']
+        }
+
         # TODO: May want to add type checking as spreadsheets don't really
         # enforce types
-        sensor_span = (conf['sensor_min'], conf['sensor_max'])
-        if conf['user_min'] is not None and conf['user_max'] is not None:
-            user_span = (conf['user_min'], conf['user_max'])
+        sensor_span = (kwargs['sensor_min'], kwargs['sensor_max'])
+        if kwargs['user_min'] is not None and kwargs['user_max'] is not None:
+            user_span = (kwargs['user_min'], kwargs['user_max'])
         else:
             user_span = None
+
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
         #cur.execute("EXECUTE get_obs (%s, %s)", (site, var))
+        tbounds = data.measure_ts.min(), data.measure_ts.max()
         res = qc.range_check(data['obs_value'], sensor_span, user_span)
         insert_qartod_result(data.index, qc.range_check.qartod_id, res)
+        add_test_history(site, var, qc.range_check.qartod_id, tbounds,
+                kwargs)
 
 if "Gross Range" in qc_config:
     gross_range_adapter(qc_config['Gross Range'])
@@ -158,15 +169,18 @@ def spike_check_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
         var = conf['variable_name']
-        low = conf['low_threshold']
-        high = conf['high_threshold']
+        kwargs = {
+                'low_thresh' : conf['low_threshold'],
+                'high_thresh' : conf['high_threshold']
+        }
+
 
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
-
-        res = qc.spike_check(data['obs_value'], low, high)
+        tbounds = data.measure_ts.min(), data.measure_ts.max()
+        res = qc.spike_check(data['obs_value'], **kwargs)
         insert_qartod_result(data.index, qc.spike_check.qartod_id, res)
-
+        add_test_history(site, var, qc.spike_check.qartod_id, tbounds, kwargs)
 if "Spike" in qc_config:
     spike_check_adapter(qc_config['Spike'])
 
@@ -180,13 +194,14 @@ def rate_of_change_check_adapter(config):
                            index_col='id')
 
         kwargs = {'thresh_val': thresh}
+        tbounds = data.measure_ts.min(), data.measure_ts.max()
         res = qc.rate_of_change_check(data['obs_value'], **kwargs)
         insert_qartod_result(data.index, qc.rate_of_change_check.qartod_id, res)
+        add_test_history(site, var, qc.rate_of_change_check.qartod_id, tbounds,
+                kwargs)
 
 if "Rate of Change" in qc_config:
     rate_of_change_check_adapter(qc_config["Rate of Change"])
-
-
 
 def flat_line_check_adapter(config):
     for _, conf in config.iterrows():
@@ -213,13 +228,17 @@ def lt_time_series_stuck_sensor_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
         var = conf['variable_name']
-        EPS= conf['EPS']
+        kwargs = {
+                'EPS': conf['EPS']
+        }
 
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
-
-        res = qc.lt_time_series_stuck_sensor(data['obs_value'], EPS)
+        tbounds = data.measure_ts.min(), data.measure_ts.max()
+        res = qc.lt_time_series_stuck_sensor(data['obs_value'], **kwargs)
         insert_qartod_result(data.index, qc.lt_time_series_stuck_sensor.qartod_id, res)
+        add_test_history(site, var, qc.lt_time_series_stuck_sensor.qartod_id, tbounds,
+                kwargs)
 if "LT Time Series Stuck Sensor" in qc_config:
     lt_time_series_stuck_sensor_adapter(qc_config['LT Time Series Stuck Sensor'])
 
@@ -227,14 +246,18 @@ def st_time_series_spike_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
         var = conf['variable_name']
-        N = conf['N']
-        M = conf['M']
-        P = conf['P']
+        kwargs = {
+                'N': conf['N'],
+                'M': conf['M'],
+                'P': conf['P']
+        }
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
-
-        res = qc.st_time_series_spike(data['obs_value'], N, M, P)
+        tbounds = data.measure_ts.min(), data.measure_ts.max()
+        res = qc.st_time_series_spike(data['obs_value'], **kwargs)
         insert_qartod_result(data.index, qc.st_time_series_spike.qartod_id, res)
+        add_test_history(site, var, qc.st_time_series_spike.qartod_id, tbounds,
+                kwargs)
 if "ST Time Series Spike" in qc_config:
     st_time_series_spike_adapter(qc_config["ST Time Series Spike"])
 
@@ -242,13 +265,18 @@ def st_time_series_segement_shift_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
         var = conf['variable_name']
-        P = conf['P']
-        m = conf['m']
-        n = conf['n']
+        kwargs= {
+                'P' : conf['P'],
+                'm' : conf['m'],
+                'n' : conf['n']
+        }
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
-        res = qc.st_time_series_segment_shift(data['obs_value'], P, m, n)
+        tbounds = data.measure_ts.min(), data.measure_ts.max()
+        res = qc.st_time_series_segment_shift(data['obs_value'], **kwargs)
         insert_qartod_result(data.index, qc.st_time_series_segment_shift.qartod_id, res)
+        add_test_history(site, var, qc.st_time_series_segment_shift.qartod_id, tbounds,
+                kwargs)
 if "ST Time Segment Shift" in qc_config:
     st_time_series_segement_shift_adapter(qc_config["ST Time Segment Shift"])
 
@@ -256,11 +284,16 @@ def lt_time_series_rate_of_change_adapter(config):
     for _, conf in config.iterrows():
         site = str(conf['site_code'])
         var = conf['variable_name']
-        MAXHSDIFF = conf['MAXHSDIFF']
+        kwargs ={
+                'MAXHSDIFF': conf['MAXHSDIFF']
+        }
         data = pd.read_sql("EXECUTE get_obs (%s, %s)", conn, params=(site, var),
                            index_col='id')
-        res = qc.lt_time_series_rate_of_change(data['obs_value'], MAXHSDIFF)
+        tbounds = data.measure_ts.min(), data.measure_ts.max()
+        res = qc.lt_time_series_rate_of_change(data['obs_value'], **kwargs)
         insert_qartod_result(data.index, qc.lt_time_series_rate_of_change.qartod_id, res)
+        add_test_history(site, var, qc.lt_time_series_rate_of_change.qartod_id, tbounds,
+                kwargs)
 if "LT Time Series Rate of Change" in qc_config:
     lt_time_series_rate_of_change_adapter(qc_config["LT Time Series Rate of Change"])
 
