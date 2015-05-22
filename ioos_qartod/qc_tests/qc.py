@@ -432,14 +432,39 @@ def st_time_series_segment_shift(arr,P, m, n):
     elif np.sum(arr_bool) < 1:
          return flag_good
 
+
 @add_qartod_ident(17, "LT Time Series Mean and Standard Deviation")
 #test 15
-def lt_time_series_mean_and_standard_deviation(arr, N):
+def lt_time_series_mean_and_standard_deviation(arr, times, N, time_range=(None, None),
+                            prev_qc=None):
     '''Check that TSVAL value is within limits defined by the operator. Operator
     defines the period over which the mean and standard deviation are calculated
     and the number of allowable standard deviations (N).'''
+    """Check that the range or standard deviation is below a certain threshold
+       over a certain time period"""
+    flag_arr = np.empty(arr.shape, dtype='uint8')
+    flag_arr.fill(QCFlags.UNKNOWN)
 
-    # See attenuated signal test 10
+    if time_range[0] is not None:
+        if time_range[1] is not None:
+            time_idx = (times >= time_range[0]) & (times <= time_range[1])
+        else:
+            time_idx = times >= time_range[0]
+    elif time_range[1] is not None:
+        time_idx = times <= time_range[1]
+    else:
+        time_idx = np.ones_like(times, dtype='bool')
+
+    mean_val = np.mean(arr[time_idx])
+    std_val = np.std(arr[time_idx])
+    lo_thresh = mean_val - N * std_val
+    hi_thresh = mean_val + N * std_val
+
+    # set to either suspect or valid data
+    flag_arr[time_idx] = (((arr[time_idx] < lo_thresh) |
+                           (arr[time_idx] > hi_thresh)).astype(np.int8)
+                           * 2 + 1)
+    return flag_arr
 
 #@add_qartod_ident(18,"LT Time Series Bulk Wave Parameters Max/Min/Acceptable Range")
 # test 19

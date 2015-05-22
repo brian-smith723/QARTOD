@@ -169,6 +169,18 @@ class QartodQcTest(unittest.TestCase):
         npt.assert_array_equal(flags_pass, np.array([1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]))
         npt.assert_array_equal(flags_fail, np.array([4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4]))
 
+    def test_lt_time_series_mean_and_standard_deviation(self):
+        signal = np.array([5, 10, 15, 5.0, 10, 15, 5, 10, 15, 5, 10, 15])
+        # half hour increments
+        times = np.arange('2005-02-01T00:00Z', '2005-02-01T06:00Z',
+                          dtype='datetime64[30m]')
+        time_range=(np.datetime64('2005-02-01T01:30Z'),
+                    np.datetime64('2005-02-01T04:30Z'))
+        N = 0.5
+        flags = qc.lt_time_series_mean_and_standard_deviation(signal, times, N,
+                                                              time_range)
+        npt.assert_array_equal(flags, np.array([2, 2, 2, 3, 1, 3, 3, 1, 3, 3,
+                                                2, 2]))
 
     def test_st_time_segment_shift(self):
         '''Wave test 12, qartod test 16'''
