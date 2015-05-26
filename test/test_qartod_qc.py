@@ -155,6 +155,15 @@ class QartodQcTest(unittest.TestCase):
         npt.assert_array_equal(flags, np.array([2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
                                                 2, 2]))
 
+    def test_st_time_series_gap(self):
+        '''Tests a time interval'''
+        time_range = np.array([np.datetime64('2005-02-01T00:00Z'),
+                               np.datetime64('2005-02-01T01:00Z'),
+                               np.datetime64('2005-02-01T11:00Z')])
+        interval = np.timedelta64(1, 'h')
+        flags = qc.st_time_series_gap(time_range, 1, interval)
+        npt.assert_array_equal(flags, np.array([2, 1, 4]))
+
 
     def test_st_time_series_spike(self):
         '''Wave test 10, qartod test 15'''

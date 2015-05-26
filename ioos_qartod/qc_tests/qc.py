@@ -248,7 +248,7 @@ def attenuated_signal_check(arr, times, min_var_warn, min_var_fail,
 
 # Waves tests
 @add_qartod_ident(12, 'ST Time Series Gap')
-def st_time_seires_gap(arr, N, start=0, end=0):
+def st_time_series_gap(time_arr, N, interval, prev_qc=None):
     '''Checks for N consecutive missing data points. This defines the size of
     an unacceptable gap in the times series.It is the maximum number of consecutive
     missing data points allowed.  A counter (C2) increments from 0 (zero) as
@@ -270,13 +270,14 @@ def st_time_seires_gap(arr, N, start=0, end=0):
     # N needs to be in nanoseconds
 
 
-    diff_time= np.diff(arr)
-    # insert data to compensate for first order differencing
-    time_arr = np.insert(diff_time, diff_time[0],diff_time[0])
-    time_arr = time_arr.astype(int)
-    flags_arr = ((arr_abs < N ) * QCFlags.GOOD_DATA + (arr_abs > N) *
-                 QCFlags.BAD_DATA)
-    return flag_arr
+    diff_time = np.diff(time_arr)
+    max_time = N * interval
+    flags_arr = ((diff_time <= max_time) * QCFlags.GOOD_DATA +
+                 (diff_time > max_time) * QCFlags.BAD_DATA)
+    flags_arr = np.insert(flags_arr, 0, QCFlags.UNKNOWN)
+    if prev_qc is not None:
+        set_prev_qc(flag_arr, prev_qc)
+    return flags_arr
 
 
 
